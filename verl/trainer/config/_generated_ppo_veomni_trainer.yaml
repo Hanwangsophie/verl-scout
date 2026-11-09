@@ -867,6 +867,7 @@ distillation:
   distillation_loss:
     _target_: verl.workers.config.DistillationLossConfig
     loss_mode: k3
+    use_old_log_probs: false
     topk: 32
     use_task_rewards: true
     distillation_loss_coef: 1.0

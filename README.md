@@ -1,3 +1,5 @@
+> **SCOUT experimental fork:** [中文实现说明、运行命令与验证范围](SCOUT.md)。非官方实现；尚未完成 GPU 训练或复现论文指标。
+
 <div align="center">
  👋 Hi, everyone!
     verl is a RL training library initiated by <b>ByteDance Seed team</b> and maintained by the verl community.

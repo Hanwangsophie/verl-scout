@@ -460,7 +460,14 @@ def compute_distillation_loss_reverse_kl_estimator(
     - distillation_losses: (bsz, resp_len)
     - distillation_metrics: Dictionary of metrics.
     """
-    student_log_probs = no_padding_2_padding(model_output["log_probs"], data)
+    loss_config: DistillationLossConfig = distillation_config.distillation_loss
+    if loss_config.use_old_log_probs:
+        student_log_probs = data["old_log_probs"]
+        if student_log_probs.is_nested:
+            student_log_probs = student_log_probs.to_padded_tensor(0.0)
+        student_log_probs = student_log_probs.detach()
+    else:
+        student_log_probs = no_padding_2_padding(model_output["log_probs"], data)
     teacher_log_probs = no_padding_2_padding(data["teacher_logprobs"], data).squeeze(-1)
     if data["response_mask"].is_nested:
         response_mask_bool = data["response_mask"].bool().to_padded_tensor(False)
@@ -468,7 +475,6 @@ def compute_distillation_loss_reverse_kl_estimator(
         response_mask_bool = data["response_mask"].bool()
     assert teacher_log_probs.shape == student_log_probs.shape == response_mask_bool.shape
 
-    loss_config: DistillationLossConfig = distillation_config.distillation_loss
     distillation_losses = kl_penalty(
         logprob=student_log_probs, ref_logprob=teacher_log_probs, kl_penalty=loss_config.loss_mode
     )

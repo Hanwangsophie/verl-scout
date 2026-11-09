@@ -23,6 +23,9 @@ distillation_loss:
   # Loss function mode for distillation
   loss_mode: k3
 
+  # Freeze PG-K1 advantages to the old student policy (SCOUT Eq. 2).
+  use_old_log_probs: false
+
   # If distillation loss requires top-k logits, this is the value of k
   topk: 32
 

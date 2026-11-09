@@ -1,0 +1,118 @@
+# Synchronous SCOUT reproduction on the V1 trainer.
+defaults:
+  - ppo_trainer
+  - _self_
+
+# Engineering defaults target a short smoke run, not the paper's final scores.
+data:
+  train_batch_size: 16
+  max_prompt_length: 1024
+  max_response_length: 2048
+  filter_overlong_prompts: true
+  truncation: error
+  shuffle: true
+  seed: 42
+
+actor_rollout_ref:
+  model:
+    path: Qwen/Qwen3-1.7B
+    use_remove_padding: true
+    enable_gradient_checkpointing: true
+  actor:
+    strategy: fsdp2
+    ppo_mini_batch_size: ${data.train_batch_size}
+    ppo_epochs: 1
+    use_dynamic_bsz: true
+    ppo_max_token_len_per_gpu: 8192
+    use_kl_loss: false
+    entropy_coeff: 0.0
+    optim:
+      lr: 5.0e-6
+      lr_scheduler_type: constant
+    fsdp_config:
+      param_offload: true
+      optimizer_offload: true
+    checkpoint:
+      async_save: false
+  ref:
+    strategy: fsdp2
+    log_prob_use_dynamic_bsz: true
+    log_prob_max_token_len_per_gpu: 8192
+    fsdp_config:
+      param_offload: true
+  rollout:
+    name: vllm
+    n: 1
+    temperature: 1.0
+    top_p: 1.0
+    top_k: -1
+    tensor_model_parallel_size: 2
+    gpu_memory_utilization: 0.4
+    log_prob_use_dynamic_bsz: true
+    log_prob_max_token_len_per_gpu: 8192
+    max_model_len: 3073
+    agent:
+      default_agent_loop: single_turn_agent
+
+algorithm:
+  adv_estimator: grpo
+  use_kl_in_reward: false
+  rollout_correction: null
+
+distillation:
+  enabled: true
+  n_gpus_per_node: 2
+  nnodes: 1
+  teacher_models:
+    teacher_model:
+      model_path: Qwen/Qwen3-4B-Instruct-2507
+      inference:
+        name: vllm
+        tensor_model_parallel_size: 2
+        gpu_memory_utilization: 0.6
+        max_model_len: 32768
+        enable_prefix_caching: false
+        checkpoint_engine:
+          _target_: verl.workers.config.CheckpointEngineConfig
+          backend: nccl
+          update_weights_bucket_megabytes: 256
+  distillation_loss:
+    loss_mode: k1
+    use_policy_gradient: true
+    use_old_log_probs: true
+    use_task_rewards: false
+    loss_max_clamp: null
+    log_prob_min_clamp: null
+
+trainer:
+  use_v1: true
+  v1:
+    trainer_mode: sync
+  nnodes: 1
+  n_gpus_per_node: 2
+  total_epochs: 1
+  logger: [console]
+  project_name: scout
+  experiment_name: qwen3_4b_to_1p7b
+  val_before_train: false
+  test_freq: -1
+  save_freq: 10
+  resume_mode: auto
+
+# Teacher training uses an additional pool. Total GPUs = student + teacher
+# inference + teacher training = 2 + 2 + 4 with these smoke defaults.
+scout:
+  teacher_update_interval: 10
+  teacher_rollouts_per_prefix: 8
+  teacher_lr: 5.0e-6
+  teacher_kl_coef: 0.001
+  teacher_nnodes: 1
+  teacher_gpus_per_node: 4
+  teacher_max_response_length: 2048
+  max_concurrent_requests: 32
+  seed: 42
+
+  # The paper describes a linear curriculum without providing its endpoints.
+  # These are explicit, adjustable implementation choices, not reported values.
+  prefix_ratio_start: 0.1
+  prefix_ratio_end: 0.9

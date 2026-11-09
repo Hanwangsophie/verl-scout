@@ -55,6 +55,9 @@ class DistillationLossConfig(BaseConfig):
         as in https://arxiv.org/abs/2306.13649. Recommended to use loss_mode=k3 or forward_kl_topk.
     policy_loss_mode (str):
         Name of the policy loss to use when use_policy_gradient is true.
+    use_old_log_probs (bool):
+        Freeze the sampled K1 advantage to the old policy log probabilities.
+        Requires policy-gradient K1; defaults to False for backwards compatibility.
     clip_ratio (float):
         PPO clipping ratio for policy loss.
     clip_ratio_low (float):
@@ -86,6 +89,9 @@ class DistillationLossConfig(BaseConfig):
     chunked_topk_chunk_size: int = 4096
 
     use_policy_gradient: bool = True
+    # SCOUT Eq. (2): freeze the K1 advantage to the rollout/old policy.
+    # Opt-in so existing OPD experiments retain their current behavior.
+    use_old_log_probs: bool = False
     policy_loss_mode: str = "vanilla"
     clip_ratio: float = 0.2
     clip_ratio_low: float = 0.2
@@ -106,6 +112,9 @@ class DistillationLossConfig(BaseConfig):
         from verl.trainer.distillation.losses import DistillationLossSettings, get_distillation_loss_settings
 
         self.loss_settings: DistillationLossSettings = get_distillation_loss_settings(self.loss_mode)
+
+        if self.use_old_log_probs and not (self.use_policy_gradient and self.loss_mode in ("k1", "kl")):
+            raise ValueError("use_old_log_probs requires policy-gradient K1 distillation")
 
         if self.policy_loss_mode != "vanilla":
             raise NotImplementedError(
