@@ -1,4 +1,6 @@
 > **SCOUT experimental fork:** [中文实现说明、运行命令与验证范围](SCOUT.md)。非官方实现；尚未完成 GPU 训练或复现论文指标。
+>
+> **Tool-level extension:** [环境快照、教师多轮续跑与动作蒸馏](SCOUT_TOOL.md)。附本地工具 sandbox；尚未接入 ALFWorld/WebShop 或验证 GPU 训练。
 
 <div align="center">
  👋 Hi, everyone!

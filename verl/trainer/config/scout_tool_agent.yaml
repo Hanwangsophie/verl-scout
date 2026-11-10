@@ -1,0 +1,2 @@
+- name: scout_tool_agent
+  _target_: verl.experimental.scout.tool_agent_loop.ScoutToolAgentLoop

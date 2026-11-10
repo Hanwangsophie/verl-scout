@@ -33,6 +33,8 @@ def _unwrap(value):
 class SCOUTTrainer(PPOTrainerSync):
     """Add periodic teacher GRPO updates to the synchronous student OPD loop."""
 
+    teacher_runtime_class = TeacherRuntime
+
     def __init__(self, config):
         validate_scout(config)
         super().__init__(config)
@@ -51,7 +53,7 @@ class SCOUTTrainer(PPOTrainerSync):
         teacher_config = make_teacher_config(self.config, self.total_training_steps)
         managers = self.teacher_model_manager.teacher_model_managers
         teacher_key = next(iter(managers))
-        self.teacher = TeacherRuntime(
+        self.teacher = self.teacher_runtime_class(
             teacher_config,
             self.resource_pool_manager.resource_pool_dict["scout_teacher_train"],
             managers[teacher_key],
@@ -61,6 +63,7 @@ class SCOUTTrainer(PPOTrainerSync):
         validate_tokenizers(self.tokenizer, self.teacher.tokenizer)
         if self.processor is not None or self.teacher.processor is not None:
             raise ValueError("This SCOUT implementation supports text-only models")
+        self._configure_teacher()
         if self.global_steps:
             folder = (
                 Path(self.config.trainer.resume_from_path)
@@ -74,6 +77,9 @@ class SCOUTTrainer(PPOTrainerSync):
             )
             self.teacher.updates = state["teacher_updates"]
 
+    def _configure_teacher(self):
+        """Optional runtime setup for environments that extend text-only SCOUT."""
+
     def on_init_end(self):
         super().on_init_end()
         # This is also mandatory on resume: inference initially loads the
@@ -86,6 +92,7 @@ class SCOUTTrainer(PPOTrainerSync):
     def _state(self):
         return {
             "schema_version": 1,
+            "mode": self.config.scout.get("mode", "text"),
             "student_step": self.global_steps,
             "teacher_updates": self.teacher.updates,
             "teacher_model": self.teacher.config.actor_rollout_ref.model.path,
@@ -102,6 +109,8 @@ class SCOUTTrainer(PPOTrainerSync):
         }
 
     def _validate_resume_state(self, state):
+        # Earlier text-only checkpoints predate the mode field.
+        state = {"mode": "text", **state}
         expected = self._state()
         for key, value in expected.items():
             if key != "teacher_updates" and state.get(key) != value:
@@ -129,16 +138,25 @@ class SCOUTTrainer(PPOTrainerSync):
         batch = super()._step_once(metrics, timing_raw, sample_batch_size)
         if self.global_steps % self.config.scout.teacher_update_interval:
             return batch
-        data = tq.kv_batch_get(
-            keys=batch.keys,
-            partition_id=batch.partition_id,
-            select_fields=["prompts", "responses", "response_mask", "data_source", "reward_model", "extra_info"],
-        )
         ratio = prefix_ratio(
             self.global_steps,
             self.total_training_steps,
             self.config.scout.prefix_ratio_start,
             self.config.scout.prefix_ratio_end,
+        )
+        contexts = self._get_prefix_contexts(batch, ratio)
+        if len(contexts) != sample_batch_size:
+            raise RuntimeError("Unexpected SCOUT prefix batch size; refusing to change GRPO weighting")
+        metrics["scout/prefix_ratio"] = ratio
+        metrics.update(self.teacher.update_from_prefixes(contexts, self.global_steps))
+        return batch
+
+    def _get_prefix_contexts(self, batch, ratio):
+        """Select exact text prefixes; tool mode overrides selection at decision boundaries."""
+        data = tq.kv_batch_get(
+            keys=batch.keys,
+            partition_id=batch.partition_id,
+            select_fields=["prompts", "responses", "response_mask", "data_source", "reward_model", "extra_info"],
         )
         eos = self.tokenizer.eos_token_id
         eos_ids = set(eos if isinstance(eos, list) else [eos])
@@ -161,11 +179,7 @@ class SCOUTTrainer(PPOTrainerSync):
                     extra_info=(_unwrap(data["extra_info"][i]) or {}) if "extra_info" in data else {},
                 )
             )
-        if len(contexts) != sample_batch_size:
-            raise RuntimeError("Unexpected SCOUT prefix batch size; refusing to change GRPO weighting")
-        metrics["scout/prefix_ratio"] = ratio
-        metrics.update(self.teacher.update_from_prefixes(contexts, self.global_steps))
-        return batch
+        return contexts
 
     def fit(self, agent_loop_manager):
         try:

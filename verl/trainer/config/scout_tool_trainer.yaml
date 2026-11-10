@@ -1,0 +1,39 @@
+# Experimental extension, not a reproduction of SCOUT or ToolOPD agent results.
+defaults:
+  - scout_trainer
+  - _self_
+
+data:
+  apply_chat_template_kwargs:
+    enable_thinking: false
+
+actor_rollout_ref:
+  rollout:
+    calculate_log_probs: false
+    multi_turn:
+      enable: true
+      tokenization_sanity_check_mode: strict
+    agent:
+      default_agent_loop: scout_tool_agent
+      agent_loop_config_path: trainer/config/scout_tool_agent.yaml
+
+trainer:
+  project_name: scout_tool
+  experiment_name: qwen3_counter_smoke
+
+scout:
+  mode: tool
+  tool:
+    environment_class: verl.experimental.scout.tool_env.CounterEnvironment
+    environment_config:
+      step_cost: 0.0
+      invalid_action_cost: 0.0
+    hf_model_type: qwen3
+    max_steps: 6
+    max_action_tokens: 128
+    max_snapshot_bytes: 262144
+    step_timeout_s: 60.0
+    # student: curriculum over real student decision boundaries.
+    # initial: same number of branches, all starting at the initial state.
+    # Actual token and environment-step costs still need to be measured.
+    prefix_source: student

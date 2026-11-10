@@ -35,7 +35,12 @@ class ScoutTaskRunner:
         trainer = None
         succeeded = False
         try:
-            trainer = SCOUTTrainer(config)
+            trainer_cls = SCOUTTrainer
+            if config.scout.get("mode", "text") == "tool":
+                from verl.experimental.scout.tool_trainer import ToolSCOUTTrainer
+
+                trainer_cls = ToolSCOUTTrainer
+            trainer = trainer_cls(config)
             trainer.init()
             agent_loop = AgentLoopManagerTQ.create(
                 config=config,

@@ -53,8 +53,14 @@ def validate_scout(config):
         raise ValueError("SCOUT requires the built-in synchronous sampler without failed-group refill")
     if config.trainer.v1.get("sync", {}).get("parameter_sync_step", 1) != 1:
         raise ValueError("SCOUT requires one student update per synchronous step")
-    if config.actor_rollout_ref.rollout.agent.default_agent_loop != "single_turn_agent":
-        raise ValueError("SCOUT currently supports single_turn_agent text rollouts only")
+    mode = config.scout.get("mode", "text")
+    if mode not in ("text", "tool"):
+        raise ValueError("scout.mode must be text or tool")
+    agent = "single_turn_agent" if mode == "text" else "scout_tool_agent"
+    if config.actor_rollout_ref.rollout.agent.default_agent_loop != agent:
+        raise ValueError(f"SCOUT {mode} mode requires {agent}")
+    if mode == "tool":
+        validate_tool_config(config)
     if OmegaConf.select(config, "algorithm.filter_groups.enable", default=False):
         raise ValueError("Disable group filtering for the SCOUT reproduction")
     if config.trainer.default_hdfs_dir is not None:
@@ -89,7 +95,11 @@ def validate_scout(config):
     max_len = teacher.inference.max_model_len
     required_len = (
         config.data.max_prompt_length
-        + int(config.data.max_response_length * scout.prefix_ratio_end)
+        + (
+            config.data.max_response_length
+            if mode == "tool"
+            else int(config.data.max_response_length * scout.prefix_ratio_end)
+        )
         + scout.teacher_max_response_length
     )
     if max_len is None or max_len < required_len:
@@ -98,6 +108,33 @@ def validate_scout(config):
         contents = config.actor_rollout_ref.actor.checkpoint[mode]
         if not {"model", "optimizer", "extra"}.issubset(contents):
             raise ValueError(f"SCOUT checkpoint {mode} must include model, optimizer, extra")
+
+
+def validate_tool_config(config):
+    """Reject settings outside the initial action-only, restorable tool contract."""
+    tool = config.scout.get("tool")
+    if tool is None:
+        raise ValueError("Use --config-name scout_tool_trainer for tool mode")
+    if not config.actor_rollout_ref.rollout.agent.agent_loop_config_path:
+        raise ValueError("Tool mode requires the scout_tool_agent registry config")
+    if not config.actor_rollout_ref.rollout.multi_turn.enable:
+        raise ValueError("SCOUT tool mode requires multi_turn.enable=true")
+    if config.actor_rollout_ref.rollout.calculate_log_probs:
+        raise ValueError("SCOUT tool mode recomputes old action log probabilities in training")
+    if config.actor_rollout_ref.rollout.get("topk_log_probs", 0):
+        raise ValueError("SCOUT tool mode does not store sampler top-k heads")
+    if tool.hf_model_type != "qwen3" or config.data.apply_chat_template_kwargs.get("enable_thinking") is not False:
+        raise ValueError("The first tool recipe requires Qwen3 text models with enable_thinking=false")
+    if min(tool.max_steps, tool.max_action_tokens, tool.max_snapshot_bytes) < 1:
+        raise ValueError("Tool step, action-token and snapshot budgets must be positive")
+    if tool.max_action_tokens > min(config.data.max_response_length, config.scout.teacher_max_response_length):
+        raise ValueError("Action token budget must fit both student and teacher response budgets")
+    if tool.prefix_source not in ("student", "initial"):
+        raise ValueError("Tool prefix_source must be student or initial")
+    if tool.step_timeout_s <= 0:
+        raise ValueError("Tool step timeout must be positive")
+    if not isinstance(tool.environment_class, str) or "." not in tool.environment_class:
+        raise ValueError("Tool mode requires a SnapshotToolEnvironment class path")
 
 
 def make_teacher_config(config, total_student_steps):

@@ -49,7 +49,7 @@ class TeacherRuntime(PPOTrainerSync):
         self.updates = 0
         self.client = client
         self.reward_handles = reward_handles
-        if not reward_handles:
+        if not reward_handles and config.scout.get("mode", "text") == "text":
             raise ValueError("SCOUT needs rule-based reward workers")
         classes = {
             "actor": RayClassWithInitArgs(
@@ -160,7 +160,7 @@ class TeacherRuntime(PPOTrainerSync):
             norm_adv_by_std_in_grpo=True,
         )
         for row, advantage in zip(rows, advantages[:, 0], strict=True):
-            row["advantages"] = torch.ones_like(row["rm_scores"]) * advantage
+            row["advantages"] = row["response_mask"].to(row["rm_scores"].dtype) * advantage
             row["returns"] = row["advantages"].clone()
         keys = [f"{row['uid']}_{i % group_size}_0" for i, row in enumerate(rows)]
         tags = [
@@ -193,6 +193,7 @@ class TeacherRuntime(PPOTrainerSync):
                 "nonconstant_group_fraction": (group_rewards.std(dim=1) > 0).float().mean().item(),
                 "updates": self.updates,
                 "continuation_tokens": sum(len(row["responses"]) for row in rows),
+                "action_tokens": sum(row["response_mask"].sum().item() for row in rows),
                 "prefix_count": len(contexts),
             }
         )
